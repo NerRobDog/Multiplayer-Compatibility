@@ -606,7 +606,85 @@ namespace Multiplayer.Compat
 
             #endregion
 
+            #region Caravan forming tab
+
+            {
+                // Vehicle Framework builds its "Vehicles" tab and, crucially,
+                // `CaravanFormation.formation` from a transpiled call inside
+                // `Dialog_FormCaravan.PostOpen`, but only when the dialog has never
+                // been opened before:
+                //
+                //   Patch_FormCaravanDialog.CreateTabListPostOpen(..., thisWindowInstanceEverOpened)
+                //       if (!thisWindowInstanceEverOpened) { formation = new FormationInfo(...); ... }
+                //
+                // Multiplayer shows a window produced by `CaravanFormingSession.PrepareDummyDialog`,
+                // which pre-sets `thisWindowInstanceEverOpened = true` so vanilla will not
+                // recalculate transferables the session already owns. That flag is load-bearing
+                // for vanilla and must stay as it is, but it also silences Vehicle Framework:
+                // `formation` is never created, and `TryAndSendWithVehicles`,
+                // `WorldRoutePannerReroute` and `Dialog_AssignSeats.FinalizeSeats` all
+                // dereference null the moment the player touches the tab.
+                //
+                // So the flag is left alone and only the value Vehicle Framework sees is
+                // corrected, and only for the one window Multiplayer actually shows.
+                var createTabList = AccessTools.DeclaredMethod(
+                    AccessTools.TypeByName("Vehicles.Patch_FormCaravanDialog"),
+                    "CreateTabListPostOpen");
+
+                if (createTabList == null)
+                {
+                    Log.Warning($"{nameof(VehicleFramework)}: Patch_FormCaravanDialog.CreateTabListPostOpen " +
+                                "not found, the vehicles caravan tab will stay broken in multiplayer.");
+                }
+                else
+                {
+                    MpCompat.harmony.Patch(createTabList,
+                        prefix: new HarmonyMethod(typeof(VehicleFramework), nameof(PreCreateTabListPostOpen)));
+                }
+            }
+
             #endregion
+
+            #endregion
+        }
+
+        #endregion
+
+        #region Caravan forming tab
+
+        /// <summary>The window type Multiplayer substitutes for the vanilla caravan dialog.</summary>
+        /// <remarks>Resolved by name: the type is internal to Multiplayer and not part of its API.</remarks>
+        private static Type caravanFormingProxyType;
+
+        /// <summary>
+        /// Lets Vehicle Framework build its caravan tab for the proxy window Multiplayer opens.
+        /// </summary>
+        /// <remarks>
+        /// Only the argument is rewritten, never the dialog's own field: vanilla still needs
+        /// `thisWindowInstanceEverOpened` to stay true so it does not recalculate the
+        /// transferables owned by the session. The rewrite is deliberately narrow — it applies
+        /// only when the tab list is still empty and no formation exists, so a genuine
+        /// re-open cannot build the tabs twice.
+        /// </remarks>
+        private static void PreCreateTabListPostOpen(Dialog_FormCaravan formCaravan,
+            List<TabRecord> tabsList, ref bool thisWindowInstanceEverOpened)
+        {
+            if (!MP.IsInMultiplayer || !thisWindowInstanceEverOpened)
+                return;
+
+            var proxyType = caravanFormingProxyType ??=
+                AccessTools.TypeByName("Multiplayer.Client.CaravanFormingProxy");
+
+            if (proxyType == null || !proxyType.IsInstanceOfType(formCaravan))
+                return;
+
+            if (tabsList == null || tabsList.Count > 0)
+                return;
+
+            if (CaravanFormation.formation != null)
+                return;
+
+            thisWindowInstanceEverOpened = false;
         }
 
         #endregion
