@@ -255,8 +255,17 @@ namespace Multiplayer.Compat
             {
                 // Enter vehicle. Can't sync through TryTakeOrderedJob, as the method does a bit more stuff.
                 MpCompat.RegisterLambdaDelegate(typeof(VehiclePawn), nameof(VehiclePawn.GetFloatMenuOptions), 0);
-                // MultiplePawnFloatMenuOptions now uses OrderPawns method reference, no lambda to sync
-                // The boarding action is handled through the method reference directly.
+                // Групповая посадка: MultiplePawnFloatMenuOptions -> локальная OrderPawns ->
+                // PromptToBoardVehicle на каждую пешку. Лямбды тут нет, и до сих пор синкалось
+                // только вложенное TryTakeOrderedJob. Но PromptToBoardVehicle перед ним кладёт
+                // место в boardingAssignments транспорта (GiveLoadJob) и ставит резерв на роль —
+                // это оставалось только у заказчика. На прибытии BoardPawn на другой машине не
+                // находил места и молча возвращал false: у хоста пешка внутри, у клиента бродит
+                // рядом с машиной. Живой десинк 2026-09-08, Desync-23, сейвы обеих машин.
+                // Синкаем метод целиком. При null-роли (нет места) он только показывает
+                // сообщение — это остаётся локальным.
+                MP.RegisterSyncMethod(typeof(VehiclePawn), nameof(VehiclePawn.PromptToBoardVehicle))
+                    .CancelIfAnyArgNull();
             }
 
             #endregion
