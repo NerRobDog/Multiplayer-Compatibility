@@ -147,6 +147,17 @@ namespace Multiplayer.Compat
 
                 // Target fuel level setter, used from Gizmo_RefuelableFuelTravel
                 MP.RegisterSyncMethod(typeof(CompFueledTravel), nameof(CompFueledTravel.TargetFuelPercent));
+                // Ползунок присваивает значение безотносительно того, менялось ли
+                // оно, и каждое присваивание становится сетевой командой. В живой
+                // сессии это дало 25010 команд, из которых почти все — этот
+                // сеттер: около пяти на тик, то есть частота кадров, а не действий
+                // игрока. Каждая команда крутит командный генератор, и окна всех
+                // трёх десинков вида «Random state from commands doesn't match»
+                // состояли из них почти целиком. Синкаем только настоящее
+                // изменение.
+                MpCompat.harmony.Patch(
+                    AccessTools.DeclaredPropertySetter(typeof(CompFueledTravel), nameof(CompFueledTravel.TargetFuelPercent)),
+                    prefix: new HarmonyMethod(typeof(VehicleFramework), nameof(CancelUnchangedTargetFuelPercent)));
                 // Refuel from inventory, used from Gizmo_RefuelableFuelTravel
                 MP.RegisterSyncMethod(typeof(CompFueledTravel), nameof(CompFueledTravel.Refuel), [typeof(List<Thing>)]);
                 MP.RegisterSyncMethod(typeof(CompFueledTravel), nameof(CompFueledTravel.Refuel), [typeof(float)]);
@@ -934,6 +945,18 @@ namespace Multiplayer.Compat
         // There's however only 1 situation that it's not the case, this will handle it.
         // The situation is pressing the gizmo's cancel button to stop targetting att all.
         private static bool CancelTurretSetTargetSync() => shouldSyncInInterface || !MP.InInterface;
+
+        /// <summary>
+        /// Отменяет присваивание целевого запаса топлива, когда значение не
+        /// изменилось. Возврат false пропускает и сам сеттер, и синк-префикс
+        /// Multiplayer, зарегистрированный на том же методе.
+        ///
+        /// Сравнение точное, а не приблизительное: расхождение даже в младшем
+        /// разряде — настоящее изменение, и его надо разослать. Пропускаем
+        /// только побитовые повторы, которые и так были бы пустой записью.
+        /// </summary>
+        private static bool CancelUnchangedTargetFuelPercent(CompFueledTravel __instance, float value)
+            => __instance == null || __instance.TargetFuelPercent != value;
 
         private static void SyncSetTarget(VehicleTurret turret, LocalTargetInfo target)
         {
