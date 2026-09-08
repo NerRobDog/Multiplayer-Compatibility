@@ -674,6 +674,106 @@ namespace Multiplayer.Compat
                 }
             }
 
+            {
+                // Отправка каравана с техникой. Ваниль 1.6: кнопка «Отправить» -> TrySend
+                // (предупреждения и подтверждение) -> TryFormAndSendCaravan (действие), и
+                // MP синкает действие. VF ставит префикс на TrySend и уводит в свою локальную
+                // отправку -> VehicleCaravanFormingUtility.StartFormingCaravan, не заходя в
+                // TryFormAndSendCaravan вовсе: лорд создавался только у нажавшего (десинк
+                // 2026-09-08, Desync-24; отпечаток — DisembarkAll без команды отправки).
+                // Перехватываем само действие: в интерфейсе оно уезжает синк-методом с точками
+                // сбора и выхода, посчитанными у нажавшего, а на каждой машине выполняется над
+                // трансферблами сессии MP. Предупреждения VF остаются у нажавшего.
+                caravanFormingSessionType = AccessTools.TypeByName("Multiplayer.Client.CaravanFormingSession");
+                var startForming = AccessTools.DeclaredMethod(typeof(VehicleCaravanFormingUtility),
+                    nameof(VehicleCaravanFormingUtility.StartFormingCaravan),
+                    [
+                        typeof(List<TransferableOneWay>), typeof(IntVec3).MakeByRefType(), typeof(IntVec3).MakeByRefType(),
+                        typeof(PlanetTile).MakeByRefType(), typeof(PlanetTile).MakeByRefType(),
+                    ]);
+
+                if (caravanFormingSessionType == null || startForming == null)
+                {
+                    Log.Warning($"{nameof(VehicleFramework)}: CaravanFormingSession or StartFormingCaravan not found, " +
+                                "sending a vehicle caravan will stay local to the sender in multiplayer.");
+                }
+                else
+                {
+                    caravanSessionTransferables = AccessTools.FieldRefAccess<List<TransferableOneWay>>(caravanFormingSessionType, "transferables");
+                    caravanSessionCancel = AccessTools.DeclaredMethod(caravanFormingSessionType, "Cancel");
+                    caravanSessionGetFirst = AccessTools.DeclaredMethod(typeof(ISessionManager), nameof(ISessionManager.GetFirstOfType))
+                        .MakeGenericMethod(caravanFormingSessionType);
+
+                    MpCompat.harmony.Patch(startForming,
+                        prefix: new HarmonyMethod(typeof(VehicleFramework), nameof(PreStartFormingVehicleCaravan)));
+                    MP.RegisterSyncMethod(typeof(VehicleFramework), nameof(SyncedStartFormingVehicleCaravan));
+                }
+            }
+
+            {
+                // Маршрут с техникой. Транспайлер VF на DoBottomButtons уводит «Изменить маршрут»
+                // в планировщик VF; выбранный тайл пишется в поля окна через статик formation,
+                // сессия MP не узнаёт, и следующий uiDirty стирает маршрут — отсюда «Сначала
+                // нужно построить маршрут» при выбранной машине. Выбор тайла уезжает в
+                // session.ChooseRoute, а тайл выхода для техники считается в синк-обработчике.
+                var formCaravanPatchType = AccessTools.TypeByName("Vehicles.Patch_FormCaravanDialog");
+                MethodInfo choseVehicleRoute = null;
+                try
+                {
+                    if (formCaravanPatchType != null)
+                        choseVehicleRoute = MpMethodUtil.GetLocalFunc(formCaravanPatchType, "WorldRoutePannerReroute", localFunc: "ChoseVehicleRoute");
+                }
+                catch (Exception e)
+                {
+                    Log.Warning($"{nameof(VehicleFramework)}: ChoseVehicleRoute not found: {e.Message}");
+                }
+
+                caravanSessionChooseRoute = caravanFormingSessionType == null ? null : AccessTools.DeclaredMethod(caravanFormingSessionType, "ChooseRoute");
+
+                if (choseVehicleRoute == null || caravanSessionChooseRoute == null)
+                {
+                    Log.Warning($"{nameof(VehicleFramework)}: vehicle route choice will not be synced in multiplayer.");
+                }
+                else
+                {
+                    MpCompat.harmony.Patch(choseVehicleRoute,
+                        prefix: new HarmonyMethod(typeof(VehicleFramework), nameof(PreChoseVehicleRoute)));
+                    MpCompat.harmony.Patch(AccessTools.DeclaredMethod(typeof(Dialog_FormCaravan), nameof(Dialog_FormCaravan.Notify_ChoseRoute)),
+                        postfix: new HarmonyMethod(typeof(VehicleFramework), nameof(PostNotifyChoseRoute)));
+                }
+            }
+
+            {
+                // Рассадка. Dialog_AssignSeats.FinalizeSeats и снятие галочки с машины меняют
+                // количества и статик CaravanHelper.assignedSeats локально, а конструктор
+                // LordJob_FormAndSendVehicles копирует assignedSeats — на второй машине лорд
+                // получает пустую рассадку, и Toils_Board падает на GetAssignedSeat.
+                // Подтверждение рассадки и снятие назначений уезжают синк-методами; количества
+                // при снятии галочки — тем же наблюдением, что у плюс-минуса MP; рассадка
+                // чистится при снятии сессии на всех машинах, а не при закрытии окна.
+                if (caravanFormingSessionType != null)
+                {
+                    caravanSessionUiDirty = AccessTools.FieldRefAccess<bool>(caravanFormingSessionType, "uiDirty");
+                    var sessionRemove = AccessTools.DeclaredMethod(caravanFormingSessionType, "Remove");
+                    if (sessionRemove != null)
+                        MpCompat.harmony.Patch(sessionRemove,
+                            postfix: new HarmonyMethod(typeof(VehicleFramework), nameof(PostCaravanSessionRemove)));
+                }
+
+                MpCompat.harmony.Patch(AccessTools.DeclaredMethod(typeof(Dialog_AssignSeats), "FinalizeSeats"),
+                    prefix: new HarmonyMethod(typeof(VehicleFramework), nameof(PreFinalizeSeats)));
+                MpCompat.harmony.Patch(AccessTools.DeclaredMethod(typeof(VehicleAssignment), nameof(VehicleAssignment.RemoveAssignments)),
+                    prefix: new HarmonyMethod(typeof(VehicleFramework), nameof(PreRemoveAssignments)));
+                MpCompat.harmony.Patch(AccessTools.DeclaredMethod(typeof(VehicleAssignment), nameof(VehicleAssignment.Clear)),
+                    prefix: new HarmonyMethod(typeof(VehicleFramework), nameof(PreClearAssignments)));
+                MpCompat.harmony.Patch(AccessTools.DeclaredMethod(typeof(TransferableVehicleWidget), "DrawCard"),
+                    prefix: new HarmonyMethod(typeof(VehicleFramework), nameof(PreDrawVehicleCard)),
+                    postfix: new HarmonyMethod(typeof(VehicleFramework), nameof(PostDrawVehicleCard)));
+
+                MP.RegisterSyncMethod(typeof(VehicleFramework), nameof(SyncedFinalizeSeats));
+                MP.RegisterSyncMethod(typeof(VehicleFramework), nameof(SyncedRemoveAssignments));
+            }
+
             #endregion
 
             #endregion
@@ -716,6 +816,247 @@ namespace Multiplayer.Compat
                 return;
 
             thisWindowInstanceEverOpened = false;
+        }
+
+        private static Type caravanFormingSessionType;
+        private static AccessTools.FieldRef<object, List<TransferableOneWay>> caravanSessionTransferables;
+        private static MethodInfo caravanSessionCancel;
+        private static MethodInfo caravanSessionGetFirst;
+
+        /// <summary>Сессия формирования каравана MP на карте, либо null.</summary>
+        private static object FindCaravanFormingSession(Map map)
+        {
+            if (map == null || caravanSessionGetFirst == null)
+                return null;
+
+            var manager = MP.GetLocalSessionManager(map);
+            return manager == null ? null : caravanSessionGetFirst.Invoke(manager, null);
+        }
+
+        // Аргументы через __args: у оригинала параметры `in`, Harmony отдаёт их значениями.
+        private static bool PreStartFormingVehicleCaravan(object[] __args)
+        {
+            if (!MP.IsInMultiplayer || !MP.InInterface)
+                return true;
+
+            var transferables = __args[0] as List<TransferableOneWay>;
+            var map = transferables?.Select(t => t.AnyThing?.MapHeld).FirstOrDefault(m => m != null);
+            var session = FindCaravanFormingSession(map);
+
+            if (session == null || !ReferenceEquals(caravanSessionTransferables(session), transferables))
+            {
+                // Список не из сессии MP — пусть VF делает своё; в мультиплеере это разойдётся,
+                // поэтому оставляем след в журнале.
+                Log.Warning($"{nameof(VehicleFramework)}: StartFormingCaravan called outside of the MP caravan forming session, executing locally.");
+                return true;
+            }
+
+            SyncedStartFormingVehicleCaravan(map, (IntVec3)__args[1], (IntVec3)__args[2], (PlanetTile)__args[3], (PlanetTile)__args[4]);
+            return false;
+        }
+
+        private static void SyncedStartFormingVehicleCaravan(Map map, IntVec3 meetingPoint, IntVec3 exitSpot,
+            PlanetTile startingTile, PlanetTile destinationTile)
+        {
+            var session = FindCaravanFormingSession(map);
+            if (session == null)
+            {
+                Log.Error($"{nameof(VehicleFramework)}: no caravan forming session on {map} while sending a vehicle caravan.");
+                return;
+            }
+
+            VehicleCaravanFormingUtility.StartFormingCaravan(caravanSessionTransferables(session),
+                meetingPoint, exitSpot, startingTile, destinationTile);
+
+            // Сессия своё отработала. Внутри команды синк-метод MP выполняется напрямую.
+            caravanSessionCancel?.Invoke(session, null);
+        }
+
+        private static MethodInfo caravanSessionChooseRoute;
+        private static AccessTools.FieldRef<object, bool> caravanSessionUiDirty;
+
+        // Локальная функция ChoseVehicleRoute живёт в display class с полем formCaravan.
+        private static bool PreChoseVehicleRoute(object __instance, PlanetTile tile)
+        {
+            if (!MP.IsInMultiplayer || !MP.InInterface)
+                return true;
+
+            var formCaravan = Traverse.Create(__instance).Field("formCaravan").GetValue<Dialog_FormCaravan>();
+            if (formCaravan == null || caravanFormingProxyType == null || !caravanFormingProxyType.IsInstanceOfType(formCaravan))
+                return true;
+
+            var session = FindCaravanFormingSession(formCaravan.map);
+            if (session == null)
+                return true;
+
+            caravanSessionChooseRoute.Invoke(session, [tile]);
+
+            // Кэши окна — локальная мелочь, тайлы приедут из сессии на uiDirty.
+            if (CaravanFormation.formation != null)
+            {
+                CaravanFormation.formation.TicksToArriveDirty = true;
+                CaravanFormation.formation.DaysWorthOfFoodDirty = true;
+            }
+            return false;
+        }
+
+        // Внутри команды: ваниль посчитала тайл выхода для пешек, для техники считает VF.
+        private static void PostNotifyChoseRoute(Dialog_FormCaravan __instance, PlanetTile destinationTile)
+        {
+            if (!MP.IsInMultiplayer || MP.InInterface || __instance.transferables == null)
+                return;
+
+            var vehicleDefs = TransferableUtility.GetPawnsFromTransferables(__instance.transferables).UniqueVehicleDefsInList();
+            if (vehicleDefs.NullOrEmpty())
+                return;
+
+            __instance.startingTile = CaravanHelper.BestExitTileToGoTo(vehicleDefs, destinationTile, __instance.map);
+        }
+
+        private static bool PreFinalizeSeats(Dialog_AssignSeats __instance, ref string failReason, ref bool __result)
+        {
+            if (!MP.IsInMultiplayer || !MP.InInterface)
+                return true;
+
+            var vehicle = __instance.vehicle;
+            var session = FindCaravanFormingSession(vehicle?.Map);
+            if (session == null)
+                return true;
+
+            // Проверка мест — как в оригинале, до отправки.
+            foreach (var handler in vehicle.handlers)
+            {
+                if (!handler.role.RequiredForCaravan)
+                    continue;
+
+                if (__instance.PreAssignedCount(handler) < handler.role.SlotsToOperate)
+                {
+                    failReason = "VF_CantAssignVehicle".Translate(vehicle.LabelCap);
+                    __result = false;
+                    return false;
+                }
+            }
+
+            var assignments = __instance.Assignments ?? [];
+            SyncedFinalizeSeats(vehicle.Map, vehicle,
+                assignments.Select(a => a.pawn).ToList(),
+                assignments.Select(a => a.handler).ToList());
+
+            failReason = string.Empty;
+            __result = true;
+            return false;
+        }
+
+        private static void SyncedFinalizeSeats(Map map, VehiclePawn vehicle, List<Pawn> pawns, List<VehicleRoleHandler> handlers)
+        {
+            var session = FindCaravanFormingSession(map);
+            if (session == null || vehicle == null)
+            {
+                Log.Error($"{nameof(VehicleFramework)}: no caravan forming session on {map} while assigning seats.");
+                return;
+            }
+
+            var transferables = caravanSessionTransferables(session);
+
+            var previous = CaravanHelper.assignedSeats.GetAssignments(vehicle);
+            if (previous != null)
+                foreach (var seat in previous)
+                    transferables.FirstOrDefault(t => t.AnyThing == seat.pawn)?.ForceTo(0);
+
+            var assignments = new List<AssignedSeat>();
+            for (var i = 0; i < pawns.Count && i < handlers.Count; i++)
+            {
+                if (pawns[i] == null || handlers[i] == null)
+                    continue;
+                assignments.Add(new AssignedSeat(pawns[i], handlers[i]));
+                transferables.FirstOrDefault(t => t.AnyThing == pawns[i])?.ForceTo(1);
+            }
+
+            CaravanHelper.assignedSeats.SetAssignments(vehicle, assignments);
+
+            var vehicleTransferable = transferables.FirstOrDefault(t => t.AnyThing == vehicle);
+            vehicleTransferable?.AdjustTo(vehicleTransferable.GetMaximumToTransfer());
+
+            CaravanFormation.Current?.NotifyTransferablesChanged();
+            caravanSessionUiDirty(session) = true;
+        }
+
+        private static bool PreRemoveAssignments(VehicleAssignment __instance, VehiclePawn vehicle)
+        {
+            if (!MP.IsInMultiplayer || !MP.InInterface || !ReferenceEquals(__instance, CaravanHelper.assignedSeats))
+                return true;
+
+            if (FindCaravanFormingSession(vehicle?.Map) == null)
+                return true;
+
+            SyncedRemoveAssignments(vehicle.Map, vehicle);
+            return false;
+        }
+
+        private static void SyncedRemoveAssignments(Map map, VehiclePawn vehicle)
+        {
+            if (vehicle == null)
+                return;
+
+            CaravanHelper.assignedSeats.RemoveAssignments(vehicle);
+            CaravanFormation.Current?.NotifyTransferablesChanged();
+
+            var session = FindCaravanFormingSession(map);
+            if (session != null)
+                caravanSessionUiDirty(session) = true;
+        }
+
+        // Пока сессия жива, рассадка живёт у всех: закрытие окна у одного её не чистит.
+        private static bool PreClearAssignments(VehicleAssignment __instance)
+        {
+            if (!MP.IsInMultiplayer || !MP.InInterface || !ReferenceEquals(__instance, CaravanHelper.assignedSeats))
+                return true;
+
+            return FindCaravanFormingSession(Find.CurrentMap) == null;
+        }
+
+        private static void PostCaravanSessionRemove()
+        {
+            CaravanHelper.assignedSeats.Clear();
+        }
+
+        // Снятие галочки с машины делает ForceTo(0) машине и её пешкам прямо в отрисовке.
+        // Берём их под наблюдение, как плюс-минус MP: изменение уедет командой.
+        private static void PreDrawVehicleCard(TransferableOneWay transferable, ref bool __state)
+        {
+            if (!MP.IsInMultiplayer || !MP.InInterface || transferable?.AnyThing is not VehiclePawn vehicle)
+                return;
+
+            if (FindCaravanFormingSession(vehicle.Map) is not ISessionWithTransferables session)
+                return;
+
+            var transferables = caravanSessionTransferables(session);
+
+            MP.WatchBegin();
+            __state = true;
+
+            CreateAndSyncMpTransferableReference(session, transferable);
+
+            var seats = CaravanHelper.assignedSeats.GetAssignments(vehicle);
+            if (seats != null)
+                foreach (var seat in seats)
+                    WatchPawnTransferable(session, transferables, seat.pawn);
+
+            foreach (var pawn in vehicle.AllPawnsAboard)
+                WatchPawnTransferable(session, transferables, pawn);
+        }
+
+        private static void WatchPawnTransferable(ISessionWithTransferables session, List<TransferableOneWay> transferables, Pawn pawn)
+        {
+            var transferable = transferables.FirstOrDefault(t => t.AnyThing == pawn);
+            if (transferable != null)
+                CreateAndSyncMpTransferableReference(session, transferable);
+        }
+
+        private static void PostDrawVehicleCard(bool __state)
+        {
+            if (__state)
+                MP.WatchEnd();
         }
 
         #endregion
