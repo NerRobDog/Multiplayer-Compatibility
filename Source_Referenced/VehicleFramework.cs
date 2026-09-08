@@ -262,8 +262,19 @@ namespace Multiplayer.Compat
                 // это оставалось только у заказчика. На прибытии BoardPawn на другой машине не
                 // находил места и молча возвращал false: у хоста пешка внутри, у клиента бродит
                 // рядом с машиной. Живой десинк 2026-09-08, Desync-23, сейвы обеих машин.
-                // Синкаем метод целиком. При null-роли (нет места) он только показывает
-                // сообщение — это остаётся локальным.
+                //
+                // Синкается весь цикл OrderPawns, а не каждый PromptToBoardVehicle по отдельности:
+                // GetNextAvailableHandler смотрит на резервы, и если резерв ставится только при
+                // исполнении команды, все пешки одного приказа получают одно и то же место —
+                // садится одна, остальные бродят (живая проверка 2026-09-08: 5 -> 4 -> 3 пешки
+                // за три приказа). Внутри команды цикл ставит резервы по очереди, места разные
+                // и одинаковые на всех машинах.
+                var orderPawns = MpMethodUtil.GetLocalFunc(typeof(VehiclePawn),
+                    nameof(VehiclePawn.MultiplePawnFloatMenuOptions), localFunc: "OrderPawns");
+                MP.RegisterSyncDelegate(typeof(VehiclePawn), orderPawns.DeclaringType.Name, orderPawns.Name);
+                // Прочие вызовы PromptToBoardVehicle из интерфейса (назначение роли по гизмо).
+                // Внутри уже синкованной команды повторно не синкается. При null-роли (нет места)
+                // метод только показывает сообщение — это остаётся локальным.
                 MP.RegisterSyncMethod(typeof(VehiclePawn), nameof(VehiclePawn.PromptToBoardVehicle))
                     .CancelIfAnyArgNull();
             }
