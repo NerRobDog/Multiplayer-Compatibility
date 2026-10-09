@@ -14,6 +14,7 @@ namespace Multiplayer.Compat
     /// <see href="https://github.com/PeteTimesSix/CompactHediffs"/>
     /// <see href="https://steamcommunity.com/sharedfiles/filedetails/?id=2031734067"/>
     [MpCompatFor("Uuugggg.SmartMedicine")]
+    [MpCompatFor("Memegoddess.SmartMedicine")] // Smart Medicine - Continued, те же типы
     public class SmartMedicine
     {
         private delegate void StockUpPasteSettingsDelegate(Pawn pawn);
