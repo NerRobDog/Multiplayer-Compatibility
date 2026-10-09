@@ -36,7 +36,10 @@ namespace Multiplayer.Compat
                 MpCompat.RegisterLambdaDelegate("GiddyUp.Harmony.Patch_PawnGetGizmos", "Postfix", 0);
 
                 // Stop waiting for rider
-                MP.RegisterSyncMethod(AccessTools.TypeByName("GiddyUpRideAndRoll.Harmony.Pawn_GetGizmos"), "PawnEndCurrentJob");
+                // Giddy-Up 2 - Continued перенёс класс в GiddyUpCore.RideAndRoll.Harmony
+                var gizmosType = AccessTools.TypeByName("GiddyUpRideAndRoll.Harmony.Pawn_GetGizmos")
+                                 ?? AccessTools.TypeByName("GiddyUpCore.RideAndRoll.Harmony.Pawn_GetGizmos");
+                MP.RegisterSyncMethod(gizmosType, "PawnEndCurrentJob");
             }
 
             // FloatMenus
