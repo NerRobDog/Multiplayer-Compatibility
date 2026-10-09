@@ -29,6 +29,12 @@ namespace Multiplayer.Compat
             // Gizmo (select fish size to catch)
             {
                 commandType = AccessTools.TypeByName("VCE_Fishing.Command_SetFishList");
+                if (commandType == null)
+                {
+                    // сборка 1.6 с Odyssey: рыбалка Vanilla Fishing Expanded свою зону и команду больше не содержит
+                    Log.Message("MPCompat :: Vanilla Fishing Expanded: нет VCE_Fishing.Command_SetFishList (Odyssey-сборка), синк рыбалки пропущен");
+                    return;
+                }
                 mapField = AccessTools.FieldRefAccess<Map>(commandType, "map");
                 fishingZoneField = AccessTools.FieldRefAccess<Zone>(commandType, "zone");
 

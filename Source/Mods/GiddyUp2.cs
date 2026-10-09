@@ -75,7 +75,8 @@ namespace Multiplayer.Compat
                 extendedPawnDataPawn = AccessTools.FieldRefAccess<Pawn>(type, AccessTools.Field(type, "_pawn") != null ? "_pawn" : "pawn");
                 MP.RegisterSyncWorker<object>(SyncExtendedPawnData, type);
 
-                getGUData = MethodInvoker.GetHandler(AccessTools.DeclaredMethod("GiddyUp.StorageUtility:GetGUData"));
+                getGUData = MethodInvoker.GetHandler(AccessTools.DeclaredMethod("GiddyUp.StorageUtility:GetExtendedPawnData")
+                                                  ?? AccessTools.DeclaredMethod("GiddyUp.StorageUtility:GetGUData"));
                 transferableAdjustTo = MethodInvoker.GetHandler(AccessTools.DeclaredMethod("Multiplayer.Client.SyncFields:TransferableAdjustTo"));
 
                 type = AccessTools.TypeByName("GiddyUp.Designator_GU");
