@@ -10,6 +10,7 @@ namespace Multiplayer.Compat
     /// <see href="https://github.com/Owlchemist/GiddyUp2"/>
     /// <see href="https://steamcommunity.com/sharedfiles/filedetails/?id=2934245647"/>
     [MpCompatFor("Owlchemist.GiddyUp")]
+    [MpCompatFor("MemeGoddess.GiddyUp")] // Giddy-Up 2 - Continued, те же типы и методы
     public class GiddyUp2
     {
         // Multiplayer
