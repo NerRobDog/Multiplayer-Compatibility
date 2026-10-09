@@ -79,7 +79,6 @@ namespace Multiplayer.Compat
                         postfix: new HarmonyMethod(typeof(SmartMedicine), nameof(PostCreateCareMenuOptions)));
                     MP.RegisterSyncMethod(typeof(SmartMedicine), nameof(SyncedToggleIgnore));
                     MP.RegisterSyncMethod(typeof(SmartMedicine), nameof(SyncedDefaultCare));
-                    MP.RegisterSyncMethod(typeof(SmartMedicine), nameof(SyncedDefaultCareAll));
                     MP.RegisterSyncMethod(typeof(SmartMedicine), nameof(SyncedSetCare));
                 }
 
@@ -87,10 +86,8 @@ namespace Multiplayer.Compat
                 type = AccessTools.TypeByName("PeteTimesSix.CompactHediffs.Rimworld.UI_compat.UI_SmartMedicine");
                 if (type != null && AccessTools.Method(AccessTools.TypeByName("SmartMedicine.HediffRowPriorityCare"), "LabelButton") == null)
                 {
-                    // Smart Medicine - Continued: меню Compact Hediffs подменяем своим на синхронных методах
-                    var addButton = AccessTools.Method(type, "AddSmartMedicineFloatMenuButton");
-                    if (addButton != null)
-                        MpCompat.harmony.Patch(addButton, prefix: new HarmonyMethod(typeof(SmartMedicine), nameof(PreCompactCareButton)));
+                    // Smart Medicine - Continued: Compact Hediffs 1.6 зовёт CreateCareMenuOptionsWithList самого Smart Medicine,
+                    // действия меню уже подменены постфиксом PostCreateCareMenuOptions, отдельный патч не нужен.
                 }
                 else if (type != null)
                 {
@@ -136,42 +133,6 @@ namespace Multiplayer.Compat
                 var category = i;
                 floatMenuAction.SetValue(__result[2 + i], (Action)(() => SyncedSetCare(affected, category)));
             }
-        }
-
-        private static readonly AccessTools.FieldRef<Texture2D[]> careTexturesRef =
-            AccessTools.StaticFieldRefAccess<Texture2D[]>(AccessTools.Field(typeof(MedicalCareUtility), "careTextures"));
-
-        // Копия AddSmartMedicineFloatMenuButton из Compact Hediffs, но действия идут через синхронные методы.
-        private static bool PreCompactCareButton(Rect buttonRect, IEnumerable<Hediff> hediffs, MedicalCareCategory defaultCare)
-        {
-            if (!MP.IsInMultiplayer)
-                return true;
-
-            if (Event.current.button != 1 || !Widgets.ButtonInvisible(buttonRect, true) || !hediffs.Any(h => h.TendableNow(true)))
-                return false;
-
-            var affected = new List<Hediff>(hediffs);
-            var textures = careTexturesRef();
-            var options = new List<FloatMenuOption>
-            {
-                new FloatMenuOption("TD.DefaultCare".Translate(), () => SyncedDefaultCareAll(affected), textures[(int)defaultCare], Color.white)
-            };
-            for (var i = 0; i < 5; i++)
-            {
-                var category = i;
-                options.Add(new FloatMenuOption(MedicalCareUtility.GetLabel((MedicalCareCategory)category),
-                    () => SyncedSetCare(affected, category), textures[category], Color.white));
-            }
-
-            Find.WindowStack.Add(new FloatMenu(options));
-            return false;
-        }
-
-        private static void SyncedDefaultCareAll(List<Hediff> affected)
-        {
-            var dict = (Dictionary<Hediff, MedicalCareCategory>)careGet(null);
-            foreach (var hediff in affected)
-                dict.Remove(hediff);
         }
 
         private static void SyncedToggleIgnore(List<Hediff> affected)

@@ -80,8 +80,8 @@ namespace Multiplayer.Compat
                 transferableAdjustTo = MethodInvoker.GetHandler(AccessTools.DeclaredMethod("Multiplayer.Client.SyncFields:TransferableAdjustTo"));
 
                 type = AccessTools.TypeByName("GiddyUp.Designator_GU");
-                designatorSelectedArea = AccessTools.FieldRefAccess<Area>(type, "selectedArea");
-                designatorAreaLabel = AccessTools.FieldRefAccess<string>(type, "areaLabel");
+                designatorSelectedArea = AccessTools.FieldRefAccess<Area>(type, AccessTools.Field(type, "<SelectedArea>k__BackingField") != null ? "<SelectedArea>k__BackingField" : "selectedArea");
+                designatorAreaLabel = AccessTools.FieldRefAccess<string>(type, AccessTools.Field(type, "_areaLabel") != null ? "_areaLabel" : "areaLabel");
                 // Designator_GU has an argument for the constructor which would fail with shouldConstruct, but it's only
                 // used by the subclasses which have parameterless ones (they provide the argument themselves).
                 MP.RegisterSyncWorker<Designator>(SyncGiddyUpDesignator, type, isImplicit: true, shouldConstruct: true);
