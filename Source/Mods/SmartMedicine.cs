@@ -1,7 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Reflection;
 using HarmonyLib;
 using Multiplayer.API;
+using RimWorld;
 using Verse;
 
 namespace Multiplayer.Compat
@@ -62,7 +64,21 @@ namespace Multiplayer.Compat
             {
                 var type = AccessTools.TypeByName("SmartMedicine.HediffRowPriorityCare");
 
-                MpCompat.RegisterLambdaDelegate(type, "LabelButton", 0, 1);
+                if (AccessTools.Method(type, "LabelButton") != null)
+                    MpCompat.RegisterLambdaDelegate(type, "LabelButton", 0, 1);
+                else
+                {
+                    // Smart Medicine - Continued: меню ухода строится в CreateCareMenuOptionsWithList (семь пунктов), без LabelButton.
+                    // Подменяем действия пунктов на синхронные методы.
+                    var settingsType = AccessTools.TypeByName("SmartMedicine.PriorityCareSettingsComp");
+                    careGet = MethodInvoker.GetHandler(AccessTools.Method(settingsType, "Get"));
+                    careGetIgnore = MethodInvoker.GetHandler(AccessTools.Method(settingsType, "GetIgnore"));
+                    MpCompat.harmony.Patch(AccessTools.Method(type, "CreateCareMenuOptionsWithList"),
+                        postfix: new HarmonyMethod(typeof(SmartMedicine), nameof(PostCreateCareMenuOptions)));
+                    MP.RegisterSyncMethod(typeof(SmartMedicine), nameof(SyncedToggleIgnore));
+                    MP.RegisterSyncMethod(typeof(SmartMedicine), nameof(SyncedDefaultCare));
+                    MP.RegisterSyncMethod(typeof(SmartMedicine), nameof(SyncedSetCare));
+                }
 
                 // CompatcHediffs compat
                 type = AccessTools.TypeByName("PeteTimesSix.CompactHediffs.Rimworld.UI_compat.UI_SmartMedicine");
@@ -91,6 +107,44 @@ namespace Multiplayer.Compat
                 // Used for both vanilla and RPG style inventory InterfaceDrop method.
                 PatchingUtilities.PatchCancelInInterface("SmartMedicine.InterfaceDrop_Patch:Postfix");
             }
+        }
+
+        private static FastInvokeHandler careGet, careGetIgnore;
+        private static readonly FieldInfo floatMenuAction = AccessTools.Field(typeof(FloatMenuOption), "action");
+
+        private static void PostCreateCareMenuOptions(List<Hediff> affectedHediffs, List<FloatMenuOption> __result)
+        {
+            // 0 — отдых в постели (игнор), 1 — уход по умолчанию, 2..6 — категории ухода
+            if (affectedHediffs.NullOrEmpty() || __result.Count != 7)
+                return;
+
+            var affected = new List<Hediff>(affectedHediffs);
+            floatMenuAction.SetValue(__result[0], (Action)(() => SyncedToggleIgnore(affected)));
+            floatMenuAction.SetValue(__result[1], (Action)(() => SyncedDefaultCare(affected[0])));
+            for (var i = 0; i < 5; i++)
+            {
+                var category = i;
+                floatMenuAction.SetValue(__result[2 + i], (Action)(() => SyncedSetCare(affected, category)));
+            }
+        }
+
+        private static void SyncedToggleIgnore(List<Hediff> affected)
+        {
+            var set = (HashSet<Hediff>)careGetIgnore(null);
+            if (!set.Add(affected[0]))
+                set.RemoveWhere(x => affected.Contains(x));
+            else
+                set.AddRange(affected);
+        }
+
+        private static void SyncedDefaultCare(Hediff primary)
+            => ((Dictionary<Hediff, MedicalCareCategory>)careGet(null)).Remove(primary);
+
+        private static void SyncedSetCare(List<Hediff> affected, int category)
+        {
+            var dict = (Dictionary<Hediff, MedicalCareCategory>)careGet(null);
+            foreach (var hediff in affected)
+                dict[hediff] = (MedicalCareCategory)category;
         }
 
         private static bool PreSetStockCount(Pawn pawn, ThingDef thingDef, int count)

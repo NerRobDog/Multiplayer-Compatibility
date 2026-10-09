@@ -72,7 +72,7 @@ namespace Multiplayer.Compat
             // Sync
             {
                 var type = AccessTools.TypeByName("GiddyUp.ExtendedPawnData");
-                extendedPawnDataPawn = AccessTools.FieldRefAccess<Pawn>(type, "pawn");
+                extendedPawnDataPawn = AccessTools.FieldRefAccess<Pawn>(type, AccessTools.Field(type, "_pawn") != null ? "_pawn" : "pawn");
                 MP.RegisterSyncWorker<object>(SyncExtendedPawnData, type);
 
                 getGUData = MethodInvoker.GetHandler(AccessTools.DeclaredMethod("GiddyUp.StorageUtility:GetGUData"));
