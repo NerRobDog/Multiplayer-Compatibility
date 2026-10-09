@@ -1544,12 +1544,12 @@ namespace Multiplayer.Compat
 
                 if (window == null)
                 {
-                    window ??= (Window)Activator.CreateInstance(
-                        newFactionSpawningDialogType,
-                        AccessTools.allDeclared,
-                        null,
-                        [new List<FactionDef>().GetEnumerator()],
-                        null);
+                    // Constructor takes (IEnumerator<FactionDef>, FactionDef) in current VEF, only the enumerator in older versions
+                    var ctor = AccessTools.GetDeclaredConstructors(newFactionSpawningDialogType)[0];
+                    var args = ctor.GetParameters().Length == 2
+                        ? new object[] { ((IEnumerable<FactionDef>)new List<FactionDef>()).GetEnumerator(), factionDef }
+                        : new object[] { new List<FactionDef>().GetEnumerator() };
+                    window = (Window)ctor.Invoke(args);
                     factionDefField(window) = factionDef;
                 }
             }
